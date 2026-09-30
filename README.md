@@ -55,51 +55,66 @@ I built this platform using a modern, scalable, and developer-friendly stack:
 
 ## 🚀 Setup & Installation
 
-Follow these simple steps to spin up the Thailand Humanoid Atlas on your local machine:
+Works on Windows (PowerShell), macOS and Linux. Requires Node.js >= 20.11, pnpm, and a PostgreSQL database (the Docker command below is the quickest local option).
 
-### 📥 1. Clone the repository and install dependencies
+### ⚙️ 1. Clone and create `.env` first
 ```bash
-# Clone the repository
 git clone https://github.com/taechasith/HumanoidTH.git
 cd HumanoidTH
 
-# Install dependencies using pnpm
+# macOS/Linux
+cp .env.example .env
+# Windows PowerShell
+Copy-Item .env.example .env
+```
+
+Edit `.env` and set at least:
+```env
+DATABASE_URL="postgresql://postgres:postgres@localhost:5432/hth"
+AUTH_SECRET="<random string, at least 32 characters>"
+ADMIN_BASIC_USER="<admin email>"
+ADMIN_BASIC_PASSWORD="<strong password>"
+```
+> [!IMPORTANT]
+> There are **no default admin credentials**. If `AUTH_SECRET`, `ADMIN_BASIC_USER` or `ADMIN_BASIC_PASSWORD` is missing, admin login stays disabled.
+> Generate a secret with `node -e "console.log(require('crypto').randomBytes(32).toString('hex'))"`.
+
+Optional keys: `GEMINI_API_KEY` (map clustering, source analysis), `GEMINI_MODEL` (default `gemini-1.5-flash`, which may be retired; set a current model), `YOUTUBE_API_KEY`, `GITHUB_TOKEN`.
+
+### 🐘 2. Start PostgreSQL (Docker example)
+```bash
+docker run --name hth-db -e POSTGRES_PASSWORD=postgres -e POSTGRES_DB=hth -p 5432:5432 -d postgres:16
+```
+
+### 📥 3. Install dependencies
+```bash
 pnpm install
 ```
-
-### ⚙️ 2. Configure Environment Variables
-Create a local `.env` file by copying the template:
-```bash
-cp .env.example .env
-```
-
-Ensure your `.env` contains the required database link and API keys:
-```env
-DATABASE_URL="postgresql://postgres:postgres@localhost:5432/thailand_humanoid_atlas?schema=public"
-YOUTUBE_API_KEY="your-youtube-api-key"
-GITHUB_TOKEN="your-github-personal-access-token"
-GEMINI_API_KEY="your-gemini-api-key"
-```
 > [!NOTE]
-> 📺 `YOUTUBE_API_KEY` is required only for video ingestion. 🔑 `GEMINI_API_KEY` is required for AI-powered contribution mapping and source analysis. 🐙 `GITHUB_TOKEN` is optional but highly recommended to avoid API rate limiting.
+> pnpm 10+ blocks dependency build scripts by default. If install ends with `ERR_PNPM_IGNORED_BUILDS`, run `pnpm approve-builds`, approve `@prisma/client`, `@prisma/engines`, `prisma`, `esbuild`, `sharp`, `unrs-resolver`, then run `pnpm install` again. This writes `pnpm-workspace.yaml`.
 
-### 🗄️ 3. Initialize & Seed the Database
+### 🗄️ 4. Create tables and seed
 ```bash
-# Generate Prisma client files
-pnpm db:generate
-
-# Push the schema to your local PostgreSQL
 pnpm db:push
-
-# Run seed script to populate sample robots, perspectives, and contributions
 pnpm db:seed
 ```
+The seed imports source records, robot models, perspectives and the owned-inventory placeholders from `data/seeds/owned_inventory.seed.yml` (private by default, masked in public views).
 
-### 🟢 4. Run Development Server
+### 🟢 5. Run
 ```bash
-pnpm dev
+pnpm dev:next   # Next.js only
+pnpm dev        # Next.js + seed file watcher
 ```
-Open [http://localhost:3000](http://localhost:3000) inside your browser to see the atlas alive! 🟢✨
+Open [http://localhost:3000](http://localhost:3000). Admins sign in at `/admin-login`.
+
+### ✅ 6. Checks
+```bash
+pnpm typecheck
+pnpm test
+pnpm check:no-mock-data
+pnpm build
+pnpm test:e2e   # Playwright; set E2E_ADMIN_USER / E2E_ADMIN_PASSWORD to include admin routes
+```
 
 ---
 
@@ -265,7 +280,8 @@ Set these variables in your Vercel project settings:
 ```env
 DATABASE_URL="prisma+postgres://accelerate.prisma-data.net/?api_key=..."
 NEXT_PUBLIC_APP_URL="https://your-project.vercel.app"
-ADMIN_BASIC_USER="creativelab.co.th@gmail.com"
+AUTH_SECRET="random-string-at-least-32-characters"
+ADMIN_BASIC_USER="admin-email"
 ADMIN_BASIC_PASSWORD="use-a-strong-password"
 YOUTUBE_API_KEY="your-api-key"
 GITHUB_TOKEN="your-token"
@@ -273,7 +289,7 @@ GEMINI_API_KEY="your-gemini-api-key"
 ```
 
 > [!IMPORTANT]
-> - 🔒 Production endpoints `/admin/*`, `/data-pulls`, and `/api/ingest/*` are protected with Basic Auth using `ADMIN_BASIC_USER` and `ADMIN_BASIC_PASSWORD`. Keep credentials safe!
+> - 🔒 `/admin/*`, `/data-pulls` and `/database` require a signed admin session (sign in at `/admin-login`). `/api/ingest/*` and `/api/export` accept an admin session or HTTP Basic with `ADMIN_BASIC_USER` / `ADMIN_BASIC_PASSWORD`. There are no built-in default credentials.
 > - ⚙️ The Vercel build command is configured to run `pnpm vercel-build` which automatically handles schema generation. Do **not** run `db:push` inside the Vercel build phase.
 
 ---

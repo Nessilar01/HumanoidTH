@@ -19,7 +19,6 @@
     "check:no-mock-data": "tsx scripts/assert-no-mock-data.ts",
     "seo:audit": "tsx scripts/seo-optimizer.ts --dry-run",
     "seo:optimize": "tsx scripts/seo-optimizer.ts --apply",
-    "network:check": "node --import tsx scratch/check-network-sources.mjs",
     "db:generate": "prisma generate",
     "db:push": "prisma db push",
     "db:seed": "tsx prisma/seed.ts",
@@ -27,7 +26,8 @@
     "ingest:github": "tsx scripts/ingest.ts github",
     "ingest:gdelt": "tsx scripts/ingest.ts gdelt",
     "ingest:youtube": "tsx scripts/ingest.ts youtube",
-    "test": "tsx --test test/*.test.ts"
+    "test": "tsx --test test/*.test.ts",
+    "test:e2e": "playwright test"
   },
   "dependencies": {
     "@emotion/react": "^11.14.0",

@@ -3,6 +3,7 @@ import { resolve } from "node:path";
 import { Prisma, PrismaClient } from "../generated/prisma";
 import { PrismaPg } from "@prisma/adapter-pg";
 import { canonicalizeUrl } from "./url";
+import { seedOwnedInventory } from "./inventory-seed";
 
 export type SeedRecord = {
   category: string;
@@ -421,4 +422,8 @@ export async function seedAtlasData(prisma: PrismaClient, datasetPath = resolve(
       });
     }
   }
+
+  // B6: robot models exist now, so inventory rows can link to them by name.
+  const inventoryCount = await seedOwnedInventory(prisma);
+  console.log(`Seeded ${inventoryCount} owned inventory record(s) from data/seeds/owned_inventory.seed.yml`);
 }
