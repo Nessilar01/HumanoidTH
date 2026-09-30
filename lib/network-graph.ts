@@ -307,7 +307,9 @@ export async function loadGraphRecordsFromPrisma(): Promise<AtlasRecord[]> {
     prisma.contribution.findMany({ take: 700, include: { relatedRobotModel: true }, orderBy: { updatedAt: "desc" } }),
     prisma.sourceRecord.findMany({ take: 1200, orderBy: [{ relevanceConfidence: "desc" }, { updatedAt: "desc" }] }),
     prisma.perspectiveAnnotation.findMany({ take: 800, include: { source: true }, orderBy: { createdAt: "desc" } }),
-    prisma.submittedData.findMany({ take: 500, orderBy: { updatedAt: "desc" } }),
+    // B3: only reviewed (APPROVED) submissions reach the public graph; queued or
+    // rejected user submissions are not published.
+    prisma.submittedData.findMany({ where: { status: "APPROVED" }, take: 500, orderBy: { updatedAt: "desc" } }),
     prisma.triplet.findMany({ take: 1400, include: { source: true }, orderBy: { confidence: "desc" } })
   ]);
 
@@ -835,7 +837,9 @@ function filterBuiltGraph(nodes: NetworkNode[], edges: NetworkEdge[], options: N
     if (options.cluster && node.cluster !== options.cluster) return false;
     if (options.nodeType && node.type !== options.nodeType) return false;
     if (options.includeLowConfidence === false && node.is_low_confidence) return false;
-    if (options.includePrivate === false && node.is_private) return false;
+    // B3: private nodes are excluded unless the caller explicitly opts in
+    // (upstream only excluded them when includePrivate === false, i.e. never by default).
+    if (options.includePrivate !== true && node.is_private) return false;
     if (node.confidence < minConfidence) return false;
     nodeSet.add(node.id);
     return true;

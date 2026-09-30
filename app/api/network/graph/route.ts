@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { buildNetworkGraph, type NetworkSourceMode } from "@/lib/network-graph";
+import { getSession } from "@/lib/session";
 
 export const dynamic = "force-dynamic";
 
@@ -9,6 +10,7 @@ export async function GET(req: NextRequest) {
   const maxEdges = Number(searchParams.get("limitEdges") ?? searchParams.get("maxEdges") ?? 800);
   const minConfidence = searchParams.get("minConfidence");
   const source = searchParams.get("source") as NetworkSourceMode | null;
+  const isAdmin = (await getSession())?.role === "ADMIN";
 
   try {
     const graph = await buildNetworkGraph({
@@ -18,7 +20,8 @@ export async function GET(req: NextRequest) {
       relation: searchParams.get("relation"),
       minConfidence: minConfidence ? Number(minConfidence) : null,
       includeLowConfidence: searchParams.get("includeLowConfidence") === null ? undefined : searchParams.get("includeLowConfidence") === "true",
-      includePrivate: searchParams.get("includePrivate") === null ? undefined : searchParams.get("includePrivate") === "true",
+      // B3: ?includePrivate=true is honoured only for a signed ADMIN session.
+      includePrivate: searchParams.get("includePrivate") === "true" && isAdmin,
       maxNodes: Number.isFinite(maxNodes) ? Math.min(Math.max(maxNodes, 25), 1000) : 300,
       maxEdges: Number.isFinite(maxEdges) ? Math.min(Math.max(maxEdges, 50), 2500) : 800
     });

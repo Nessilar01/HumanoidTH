@@ -135,11 +135,14 @@ Please evaluate and classify this article. Set:
   Keep entity names clean and canonical. Return an empty array if no clear relationships can be extracted.
 `;
 
-  const url = `https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=${apiKey}`;
+  // Key in a header, not the URL (URLs end up in logs); model configurable via env.
+  const model = process.env.GEMINI_MODEL || "gemini-1.5-flash";
+  const url = `https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(model)}:generateContent`;
   const response = await fetch(url, {
     method: "POST",
     headers: {
-      "Content-Type": "application/json"
+      "Content-Type": "application/json",
+      "x-goog-api-key": apiKey
     },
     body: JSON.stringify({
       contents: [{

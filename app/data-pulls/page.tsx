@@ -1,6 +1,8 @@
 import { prisma } from "@/lib/prisma";
 import type { Metadata } from "next";
 import { cookies } from "next/headers";
+import { redirect } from "next/navigation";
+import { getSession } from "@/lib/session";
 import { getTranslation } from "@/lib/translations";
 
 export const dynamic = "force-dynamic";
@@ -11,6 +13,11 @@ export const metadata: Metadata = {
 };
 
 export default async function DataPullsPage() {
+  // B3: defense in depth. middleware.ts already redirects non-admins, but a
+  // matcher change must not silently re-open this page to the public.
+  const session = await getSession();
+  if (session?.role !== "ADMIN") redirect("/admin-login?from=/data-pulls");
+
   const cookieStore = await cookies();
   const lang = (cookieStore.get("lang")?.value || "en") as "en" | "th";
   const t = getTranslation(lang);

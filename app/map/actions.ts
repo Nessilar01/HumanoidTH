@@ -1,7 +1,9 @@
 "use server";
 
 import { revalidatePath } from "next/cache";
+import { redirect } from "next/navigation";
 import { prisma } from "@/lib/prisma";
+import { requireRole } from "@/lib/session";
 
 export type ContributionMapPoint = {
   id: string;
@@ -16,69 +18,36 @@ export type ContributionMapPoint = {
   detailsList: string[];
 };
 
-function getFallbackClusters(): ContributionMapPoint[] {
-  return [
-    {
-      id: "kmutt_fibo",
-      title: "KMUTT Institute of Field Robotics (FIBO)",
-      organization: "King Mongkut's University of Technology Thonburi",
-      locationLabel: "Bangkok, Thailand",
-      latitude: 13.6521,
-      longitude: 100.4942,
-      summary: "Thailand's premier robotics institute. Actively researching human-robot interaction, medical humanoid assistants, and open-source humanoid locomotion control.",
-      contributorType: "University",
-      contributionCount: 12,
-      detailsList: ["FIBO Humanoid Walker", "Medical Service Robot Cabinet", "HRI Emotion Modeling Dataset"]
-    },
-    {
-      id: "chula_robo",
-      title: "Chulalongkorn LIRA Lab",
-      organization: "Chulalongkorn University",
-      locationLabel: "Bangkok, Thailand",
-      latitude: 13.7367,
-      longitude: 100.5331,
-      summary: "Leading research group in social humanoids and medical exoskeleton systems. Developed several generations of eldercare companion robots.",
-      contributorType: "University",
-      contributionCount: 8,
-      detailsList: ["CU Elder Companion", "Chula Exoskeleton Knee v2", "Thai Speech Interaction Model"]
-    },
-    {
-      id: "vistec_brain",
-      title: "VISTEC Brain Computer Interface Lab",
-      organization: "Vidyasirimedhi Institute of Science and Technology",
-      locationLabel: "Rayong, Thailand",
-      latitude: 12.9818,
-      longitude: 101.4429,
-      summary: "State-of-the-art bio-inspired locomotion and neural control mapping. Focuses on humanoid hand dexterity and reinforcement learning models.",
-      contributorType: "University",
-      contributionCount: 5,
-      detailsList: ["Biomimetic Humanoid Hand", "Dextrous Gripper Control System"]
-    },
-    {
-      id: "cmu_robotics",
-      title: "Chiang Mai University Robotics Lab",
-      organization: "Chiang Mai University",
-      locationLabel: "Chiang Mai, Thailand",
-      latitude: 18.8025,
-      longitude: 98.9516,
-      summary: "Developing agricultural service humanoids and navigation platforms for northern Thailand health and tourism sectors.",
-      contributorType: "University",
-      contributionCount: 4,
-      detailsList: ["Lanna Tour Guide Robot", "Autonomous Hospital Trolley"]
-    },
-    {
-      id: "ct_asia",
-      title: "CT Asia Robotics (Dinsaw)",
-      organization: "CT Asia Co., Ltd.",
-      locationLabel: "Bangkok, Thailand",
-      latitude: 13.7845,
-      longitude: 100.5892,
-      summary: "Commercial pioneer of companion humanoids in Southeast Asia. Developer of the Dinsaw robot series, deployed in hospitals across Thailand and Japan.",
-      contributorType: "Enterprise",
-      contributionCount: 9,
-      detailsList: ["Dinsaw Mini companion", "Dinsaw 4 Eldercare Assist", "Commercial Hospital Reception Deployment"]
-    }
-  ];
+// ---------------------------------------------------------------------------
+// Baseline B4: no fabricated data.
+//
+// Upstream had a hardcoded cluster list: five hand-written institutions with
+// invented counts and project names. When Gemini failed, it returned them to the
+// page AND wrote them into StatsCache, so invented clusters looked like analysed
+// DB data. That violates the repo's own data rule (pnpm check script + docs/data-governance.md).
+// Now a failure shows an error / empty state instead.
+//
+// A database that already ran the old code may still hold those invented clusters in
+// StatsCache. We recognise them by their fixed IDs and treat the cache as empty.
+// ---------------------------------------------------------------------------
+const LEGACY_PLACEHOLDER_IDS = new Set(["kmutt_fibo", "chula_robo", "vistec_brain", "cmu_robotics", "ct_asia"]);
+const CACHE_KEY = "map_contribution_clusters";
+
+function isLegacyPlaceholderCache(clusters: ContributionMapPoint[]) {
+  return clusters.length > 0 && clusters.every((c) => LEGACY_PLACEHOLDER_IDS.has(c.id));
+}
+
+/** Keep only well-formed clusters with coordinates roughly inside Thailand. */
+function sanitizeClusters(raw: unknown): ContributionMapPoint[] {
+  if (!Array.isArray(raw)) return [];
+  return raw.filter((c): c is ContributionMapPoint =>
+    !!c &&
+    typeof c.id === "string" &&
+    typeof c.title === "string" &&
+    typeof c.latitude === "number" && c.latitude >= 5 && c.latitude <= 21 &&
+    typeof c.longitude === "number" && c.longitude >= 97 && c.longitude <= 106 &&
+    Array.isArray(c.detailsList)
+  );
 }
 
 export async function analyzeClustersWithGemini(): Promise<ContributionMapPoint[]> {
@@ -108,7 +77,10 @@ export async function analyzeClustersWithGemini(): Promise<ContributionMapPoint[
         countryOfOrigin: true
       }
     }),
+    // Privacy: private inventory (custodian, location, repair notes) must not be
+    // sent to a third-party API. Only records marked public are analysed.
     prisma.ownedInventory.findMany({
+      where: { visibility: "public" },
       select: {
         id: true,
         displayName: true,
@@ -171,11 +143,15 @@ For each cluster/location:
 Return the response as a JSON object matching the requested schema.
 `;
 
-  const url = `https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=${apiKey}`;
+  // Key goes in a header, not the URL query string (URLs end up in logs).
+  // Model is configurable because gemini-1.5-flash has likely been retired.
+  const model = process.env.GEMINI_MODEL || "gemini-1.5-flash";
+  const url = `https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(model)}:generateContent`;
   const response = await fetch(url, {
     method: "POST",
     headers: {
-      "Content-Type": "application/json"
+      "Content-Type": "application/json",
+      "x-goog-api-key": apiKey
     },
     body: JSON.stringify({
       contents: [{
@@ -228,17 +204,20 @@ Return the response as a JSON object matching the requested schema.
   }
 
   const parsed = JSON.parse(textResponse);
-  const clusters = (parsed.clusters || []) as ContributionMapPoint[];
+  const clusters = sanitizeClusters(parsed.clusters);
+  if (!clusters.length) {
+    throw new Error("Gemini returned no valid clusters; cache left unchanged.");
+  }
   
   // Save to StatsCache
   await prisma.statsCache.upsert({
-    where: { key: "map_contribution_clusters" },
+    where: { key: CACHE_KEY },
     update: {
       valueJson: clusters as any,
       updatedAt: new Date()
     },
     create: {
-      key: "map_contribution_clusters",
+      key: CACHE_KEY,
       valueJson: clusters as any
     }
   });
@@ -246,48 +225,40 @@ Return the response as a JSON object matching the requested schema.
   return clusters;
 }
 
-export async function fetchContributionClusters(): Promise<ContributionMapPoint[]> {
+export type ClusterLoadResult = {
+  clusters: ContributionMapPoint[];
+  status: "ok" | "empty" | "stale_placeholder_ignored" | "db_error";
+};
+
+/**
+ * Read clusters from cache only. Page renders no longer call Gemini, because an
+ * anonymous visitor should not trigger a paid API call on every empty-cache load.
+ * Analysis runs only through the admin-only reanalyze action below.
+ */
+export async function fetchContributionClusters(): Promise<ClusterLoadResult> {
   try {
-    const cached = await prisma.statsCache.findUnique({
-      where: { key: "map_contribution_clusters" }
-    });
-    if (cached && cached.valueJson && Array.isArray(cached.valueJson)) {
-      return cached.valueJson as unknown as ContributionMapPoint[];
-    }
+    const cached = await prisma.statsCache.findUnique({ where: { key: CACHE_KEY } });
+    const clusters = sanitizeClusters(cached?.valueJson);
+    if (isLegacyPlaceholderCache(clusters)) return { clusters: [], status: "stale_placeholder_ignored" };
+    return { clusters, status: clusters.length ? "ok" : "empty" };
   } catch (e) {
     console.error("Cache fetch failed:", e);
-  }
-
-  try {
-    return await analyzeClustersWithGemini();
-  } catch (e) {
-    console.error("Gemini cluster analysis failed, using fallback mock seeds:", e);
-    return getFallbackClusters();
+    return { clusters: [], status: "db_error" };
   }
 }
 
 export async function reanalyzeClustersWithGemini() {
+  // B1/B4: triggers a paid external API and writes to the DB -> admin only.
+  await requireRole("ADMIN");
+
+  let failed = false;
   try {
     await analyzeClustersWithGemini();
   } catch (e) {
-    console.error("Reanalysis action encountered an error, writing high-fidelity mock seeds:", e);
-    // If analyzeClustersWithGemini fails or apiKey check fails, write mock seeds to StatsCache so we always have data
-    const fallbacks = getFallbackClusters();
-    try {
-      await prisma.statsCache.upsert({
-        where: { key: "map_contribution_clusters" },
-        update: {
-          valueJson: fallbacks as any,
-          updatedAt: new Date()
-        },
-        create: {
-          key: "map_contribution_clusters",
-          valueJson: fallbacks as any
-        }
-      });
-    } catch (dbErr) {
-      console.error("Failed to write fallback to statsCache database:", dbErr);
-    }
+    // B4: on failure we write NOTHING. The previous (real) cache stays as is.
+    console.error("Gemini cluster analysis failed; cache not modified:", e);
+    failed = true;
   }
   revalidatePath("/map");
+  if (failed) redirect("/map?error=analysis_failed");
 }

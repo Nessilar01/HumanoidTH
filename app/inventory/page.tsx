@@ -1,6 +1,7 @@
 import Link from "next/link";
 import type { Metadata } from "next";
 import { cookies } from "next/headers";
+import { getSession } from "@/lib/session";
 import { prisma } from "@/lib/prisma";
 import { getTranslation } from "@/lib/translations";
 
@@ -36,8 +37,12 @@ export const metadata: Metadata = {
 
 export default async function InventoryPage({ searchParams }: { searchParams: SearchParams }) {
   const params = await searchParams;
-  const isPublic = params.mode === "public";
-  
+  // B3: upstream defaulted to Operator Mode (serials, exact locations, repair
+  // logs) for every visitor. Now public-safe is the default, and operator mode
+  // is honoured only for a signed ADMIN session.
+  const isAdmin = (await getSession())?.role === "ADMIN";
+  const isPublic = !(isAdmin && params.mode === "operator");
+
   const cookieStore = await cookies();
   const lang = (cookieStore.get("lang")?.value || "en") as "en" | "th";
   const t = getTranslation(lang);
@@ -107,12 +112,14 @@ export default async function InventoryPage({ searchParams }: { searchParams: Se
           <p className="muted">{t.inventoryDesc}</p>
         </div>
         <div className="toolbar">
-          <Link 
-            className={`button ${!isPublic ? "primary" : ""}`} 
-            href="/inventory?mode=operator"
-          >
-            {localT.opMode}
-          </Link>
+          {isAdmin && (
+            <Link 
+              className={`button ${!isPublic ? "primary" : ""}`} 
+              href="/inventory?mode=operator"
+            >
+              {localT.opMode}
+            </Link>
+          )}
           <Link 
             className={`button ${isPublic ? "primary" : ""}`} 
             href="/inventory?mode=public"

@@ -1,7 +1,8 @@
 import type { Metadata } from "next";
 import { cookies } from "next/headers";
 import { prisma } from "@/lib/prisma";
-import { loginAsUser, logoutUser, registerAndLoginUser } from "@/app/actions";
+import { logoutUser, registerAndLoginUser } from "@/app/actions";
+import { getSession } from "@/lib/session";
 import { getTranslation } from "@/lib/translations";
 
 export const dynamic = "force-dynamic";
@@ -13,24 +14,24 @@ export const metadata: Metadata = {
 
 export default async function ProfilePage() {
   const cookieStore = await cookies();
-  const currentEmail = cookieStore.get("user_email")?.value;
-  const currentRole = cookieStore.get("user_role")?.value;
+  // B1: read identity from the signed session, not from plain cookies.
+  const session = await getSession();
+  const currentEmail = session?.email;
+  const currentRole = session?.role;
   const lang = (cookieStore.get("lang")?.value || "en") as "en" | "th";
   const t = getTranslation(lang);
 
-  let users: any[] = [];
+  // B3: upstream also loaded the latest 20 users (with emails) and showed them to
+  // every visitor. Only the current user's own record is loaded now.
   let currentUser: any = null;
   let userSubmissions: any[] = [];
   try {
-    [users, currentUser] = await Promise.all([
-      prisma.user.findMany({ orderBy: { createdAt: "desc" }, take: 20 }),
-      currentEmail
-        ? prisma.user.findUnique({
-            where: { email: currentEmail },
-            include: { submissions: { orderBy: { createdAt: "desc" }, take: 50 } }
-          })
-        : Promise.resolve(null)
-    ]);
+    currentUser = currentEmail
+      ? await prisma.user.findUnique({
+          where: { email: currentEmail },
+          include: { submissions: { orderBy: { createdAt: "desc" }, take: 50 } }
+        })
+      : null;
     userSubmissions = currentUser?.submissions ?? [];
   } catch (error) {
     console.error("Failed to query users in profile page:", error);
@@ -71,34 +72,15 @@ export default async function ProfilePage() {
               Full Name (Optional)
               <input name="name" placeholder="Ichiro Kato" />
             </label>
-            <label>
-              Role
-              <select name="role" defaultValue="USER">
-                <option value="USER">User (Read-only)</option>
-                <option value="RESEARCHER">Researcher</option>
-                <option value="ADMIN">Administrator</option>
-              </select>
-            </label>
             <button type="submit" className="primary" style={{ marginTop: "6px" }}>
               Log In / Register
             </button>
           </form>
 
-          <div style={{ borderTop: "1px solid var(--border)", paddingTop: "14px", marginTop: "14px" }}>
-            <span className="muted" style={{ fontSize: "12px" }}>Quick Simulators:</span>
-            <div style={{ display: "flex", gap: "10px", marginTop: "8px" }}>
-              <form action={loginAsUser.bind(null, "creativelab.co.th@gmail.com", "ADMIN")}>
-                <button type="submit" className="button" style={{ fontSize: "11px", minHeight: "28px" }}>
-                  Login as Administrator
-                </button>
-              </form>
-              <form action={loginAsUser.bind(null, "researcher@example.com", "RESEARCHER")}>
-                <button type="submit" className="button" style={{ fontSize: "11px", minHeight: "28px" }}>
-                  Login as Researcher
-                </button>
-              </form>
-            </div>
-          </div>
+          {/* B1: "Login as Administrator" / role selector removed. Admins sign in at /admin-login. */}
+          <p className="muted" style={{ fontSize: 12, marginTop: 14 }}>
+            Administrators: sign in at <a href="/admin-login">/admin-login</a>.
+          </p>
         </section>
       )}
 
@@ -170,36 +152,6 @@ export default async function ProfilePage() {
         </section>
       )}
 
-      <h2>Corpus Users List ({users.length})</h2>
-      <div className="table-wrap">
-        <table>
-          <thead>
-            <tr>
-              <th>Name</th>
-              <th>Email</th>
-              <th>Role</th>
-              <th>Registered At</th>
-            </tr>
-          </thead>
-          <tbody>
-            {users.map((user) => (
-              <tr key={user.id}>
-                <td>{user.name || "N/A"}</td>
-                <td><code>{user.email}</code></td>
-                <td>
-                  <span className={`badge ${user.role === "ADMIN" ? "ok" : ""}`}>{user.role}</span>
-                </td>
-                <td>{user.createdAt.toLocaleString()}</td>
-              </tr>
-            ))}
-            {!users.length && (
-              <tr>
-                <td className="empty" colSpan={4}>No users registered in database.</td>
-              </tr>
-            )}
-          </tbody>
-        </table>
-      </div>
     </>
   );
 }

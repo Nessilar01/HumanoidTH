@@ -146,7 +146,7 @@ const localT = {
     graphFailedLoad: "Network graph failed to load.",
     noRelationships: "No network relationships have been generated yet.",
     depth: "Depth",
-    sourceWarning: "Using local JSON cache fallback"
+    sourceWarning: "Using local JSON cache (file source)"
   },
   th: {
     searchPlaceholder: "ค้นหาโหนด...",
@@ -696,7 +696,7 @@ export default function NetworkGraphClient({ lang = "en" }: { lang?: "en" | "th"
     database: "Database",
     file: "Import file",
     hybrid: "Hybrid",
-    fallback_file: "File fallback"
+    fallback_file: "File source (database unavailable)"
   }[graph?.meta.resolved_source ?? "file"];
 
   return (

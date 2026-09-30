@@ -1,4 +1,5 @@
 import { cookies } from "next/headers";
+import { getSession } from "@/lib/session";
 import type { Metadata } from "next";
 import { prisma } from "@/lib/prisma";
 import { createSubmission, registerAndLoginUser } from "@/app/actions";
@@ -93,7 +94,7 @@ export const metadata: Metadata = {
 
 export default async function SubmitDataPage() {
   const cookieStore = await cookies();
-  const currentEmail = cookieStore.get("user_email")?.value;
+  const currentEmail = (await getSession())?.email; // B1: signed session
   const lang = (cookieStore.get("lang")?.value || "en") as "en" | "th";
   const t = getTranslation(lang);
   const localT = copy[lang];

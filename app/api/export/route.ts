@@ -1,9 +1,30 @@
 import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
+import { getSession } from "@/lib/session";
+import { checkAdminCredentials } from "@/lib/auth";
+
+async function isAuthorizedAdmin(req: NextRequest) {
+  if ((await getSession())?.role === "ADMIN") return true;
+  const header = req.headers.get("authorization");
+  if (!header?.startsWith("Basic ")) return false;
+  try {
+    const decoded = atob(header.slice("Basic ".length));
+    const sep = decoded.indexOf(":");
+    return sep >= 0 && (await checkAdminCredentials(decoded.slice(0, sep), decoded.slice(sep + 1)));
+  } catch {
+    return false;
+  }
+}
 
 export const dynamic = "force-dynamic";
 
 export async function GET(req: NextRequest) {
+  // B3: defense in depth. middleware.ts already checks this; repeat it here so a
+  // matcher change cannot expose the export. Accept admin session OR valid Basic.
+  if (!(await isAuthorizedAdmin(req))) {
+    return NextResponse.json({ error: "Unauthorized. Admin credentials required." }, { status: 401 });
+  }
+
   const { searchParams } = new URL(req.url);
   const table = searchParams.get("table") || "sources";
 

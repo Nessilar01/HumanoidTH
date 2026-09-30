@@ -2,6 +2,8 @@ import Link from "next/link";
 import type { Metadata } from "next";
 import { prisma } from "@/lib/prisma";
 import { cookies } from "next/headers";
+import { redirect } from "next/navigation";
+import { getSession } from "@/lib/session";
 import { getTranslation } from "@/lib/translations";
 
 export const dynamic = "force-dynamic";
@@ -24,6 +26,10 @@ const tableOptions = [
 ] as const;
 
 export default async function DatabasePage({ searchParams }: { searchParams: SearchParams }) {
+  // B3: defense in depth. middleware.ts already redirects non-admins, but a
+  // matcher change must not silently re-open this page to the public.
+  const session = await getSession();
+  if (session?.role !== "ADMIN") redirect("/admin-login?from=/database");
   const params = await searchParams;
   const table = tableOptions.some(t => t.value === params.table) ? params.table! : "sources";
   const q = params.q ?? "";

@@ -2,6 +2,7 @@ import type { Metadata } from "next";
 import { cookies } from "next/headers";
 import { getTranslation } from "@/lib/translations";
 import AdminLoginForm from "./AdminLoginForm";
+import { getAuthSecret } from "@/lib/auth";
 
 type SearchParams = Promise<{ error?: string; from?: string }>;
 
@@ -12,6 +13,8 @@ export const metadata: Metadata = {
   const params = await searchParams;
   const error = params.error;
   const from = params.from || "/";
+  // Admin login works only when all three env vars exist (no hardcoded default credentials).
+  const adminLoginDisabled = !process.env.ADMIN_BASIC_USER || !process.env.ADMIN_BASIC_PASSWORD || !getAuthSecret();
 
   const cookieStore = await cookies();
   const lang = (cookieStore.get("lang")?.value || "en") as "en" | "th";
@@ -24,7 +27,9 @@ export const metadata: Metadata = {
       email: "Email Address",
       password: "Security Password",
       btn: "Authorize Session",
-      errorMsg: "Invalid credentials. Please verify your admin email and password."
+      errorMsg: "Invalid credentials. Please verify your admin email and password.",
+      useAdminMsg: "This account is an administrator. Please sign in here with the admin password.",
+      disabledMsg: "Admin login is disabled: ADMIN_BASIC_USER, ADMIN_BASIC_PASSWORD and AUTH_SECRET must be set on the server."
     },
     th: {
       title: "การยืนยันตัวตนผู้ดูแลระบบ",
@@ -32,7 +37,9 @@ export const metadata: Metadata = {
       email: "อีเมลผู้ดูแลระบบ",
       password: "รหัสผ่านความปลอดภัย",
       btn: "ยืนยันสิทธิ์การเข้าใช้งาน",
-      errorMsg: "ข้อมูลการเข้าสู่ระบบไม่ถูกต้อง กรุณาตรวจสอบอีเมลและรหัสผ่านอีกครั้ง"
+      errorMsg: "ข้อมูลการเข้าสู่ระบบไม่ถูกต้อง กรุณาตรวจสอบอีเมลและรหัสผ่านอีกครั้ง",
+      useAdminMsg: "บัญชีนี้เป็นผู้ดูแลระบบ กรุณาเข้าสู่ระบบที่หน้านี้ด้วยรหัสผ่านผู้ดูแล",
+      disabledMsg: "ปิดการเข้าสู่ระบบผู้ดูแลอยู่: ต้องตั้งค่า ADMIN_BASIC_USER, ADMIN_BASIC_PASSWORD และ AUTH_SECRET บนเซิร์ฟเวอร์"
     }
   }[lang];
 
@@ -273,9 +280,13 @@ export const metadata: Metadata = {
           <h2 className="login-title">{localT.title}</h2>
           <p className="login-desc">{localT.desc}</p>
 
+          {/* B1: tell operators when env config is missing instead of failing silently */}
+          {adminLoginDisabled && (
+            <div className="login-error">{localT.disabledMsg}</div>
+          )}
           {error && (
             <div className="login-error">
-              {localT.errorMsg}
+              {error === "use_admin_login" ? localT.useAdminMsg : localT.errorMsg}
             </div>
           )}
 

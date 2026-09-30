@@ -7,6 +7,8 @@ import type { SourceType } from "../generated/prisma";
 import { prisma } from "@/lib/prisma";
 import { runAdapter } from "@/lib/ingest/adapters";
 import { canonicalizeUrl } from "@/lib/url";
+import { checkAdminCredentials } from "@/lib/auth";
+import { clearSession, getSession, requireRole, setSession } from "@/lib/session";
 
 function readTextField(formData: FormData, key: string) {
   return String(formData.get(key) ?? "").trim();
@@ -58,13 +60,13 @@ function revalidateAtlasCms() {
 }
 
 export async function createSubmission(formData: FormData) {
-  const cookieStore = await cookies();
-  const currentEmail = cookieStore.get("user_email")?.value;
-  if (!currentEmail) {
+  // B1: identity comes from the signed session, not a plain user_email cookie.
+  const session = await getSession();
+  if (!session) {
     redirect("/profile?from=/submit-data");
   }
 
-  const user = await prisma.user.findUnique({ where: { email: currentEmail } });
+  const user = await prisma.user.findUnique({ where: { email: session.email } });
   if (!user) {
     redirect("/profile?from=/submit-data");
   }
@@ -88,11 +90,13 @@ export async function createSubmission(formData: FormData) {
 }
 
 export async function updateSubmissionStatus(id: string, status: "APPROVED" | "REJECTED" | "NEEDS_REVIEW") {
+  await requireRole("ADMIN"); // B1: server actions are public endpoints; check here, not only in the UI
   await prisma.submittedData.update({ where: { id }, data: { status } });
   revalidateAtlasCms();
 }
 
 export async function runDataPull(formData: FormData) {
+  await requireRole("ADMIN"); // B1: server actions are public endpoints; check here, not only in the UI
   const adapter = String(formData.get("adapter") ?? "OPENALEX") as SourceType;
   const query = String(formData.get("query") ?? "").trim();
   const limit = Number(formData.get("limit") ?? 10);
@@ -132,71 +136,48 @@ export async function runDataPull(formData: FormData) {
   revalidatePath("/");
 }
 
-export async function loginAsUser(email: string, role: string) {
-  const user = await prisma.user.upsert({
-    where: { email },
-    update: { role: role as any },
-    create: {
-      email,
-      name: email.split("@")[0],
-      role: role as any
-    }
-  });
-
-  const cookieStore = await cookies();
-  cookieStore.set("user_email", user.email, { path: "/" });
-  cookieStore.set("user_role", user.role, { path: "/" });
-  if (user.role === "ADMIN") {
-    cookieStore.set("admin_session", "true", { path: "/" });
-  } else {
-    cookieStore.delete("admin_session");
-  }
-  revalidatePath("/profile");
-  revalidateAtlasCms();
-  redirect("/profile");
-}
+// ---------------------------------------------------------------------------
+// Login / logout (Baseline B1)
+//
+// Upstream accepted `role` from the client (form field or bound argument) and
+// set unsigned cookies, so anyone could register as ADMIN. Now:
+//   - Email login can only create USER accounts and never changes a role.
+//   - Accounts with the ADMIN role cannot log in by email; they must use
+//     /admin-login with the env credentials.
+//   - The session is a signed httpOnly cookie (lib/session.ts).
+// Known limitation (not fixed here): email login has no password, so knowing a
+// non-admin user's email lets you act as that user. See docs/baseline-audit.md.
+// ---------------------------------------------------------------------------
 
 export async function registerAndLoginUser(formData: FormData) {
-  const email = String(formData.get("email") ?? "").trim();
+  const email = String(formData.get("email") ?? "").trim().toLowerCase();
   const name = String(formData.get("name") ?? "").trim();
-  const role = String(formData.get("role") ?? "USER") as any;
   const redirectTo = String(formData.get("redirectTo") ?? "/profile");
+  // Note: any "role" field in formData is ignored on purpose.
 
   if (!email) {
     throw new Error("Email is required");
   }
 
-  const user = await prisma.user.upsert({
-    where: { email },
-    update: {
-      name: name || undefined,
-      role
-    },
-    create: {
-      email,
-      name: name || email.split("@")[0],
-      role
-    }
-  });
-
-  const cookieStore = await cookies();
-  cookieStore.set("user_email", user.email, { path: "/" });
-  cookieStore.set("user_role", user.role, { path: "/" });
-  if (user.role === "ADMIN") {
-    cookieStore.set("admin_session", "true", { path: "/" });
-  } else {
-    cookieStore.delete("admin_session");
+  const existing = await prisma.user.findUnique({ where: { email } });
+  if (existing?.role === "ADMIN") {
+    redirect("/admin-login?error=use_admin_login");
   }
+
+  const user = existing
+    ? await prisma.user.update({ where: { email }, data: { name: name || undefined } }) // role untouched
+    : await prisma.user.create({ data: { email, name: name || email.split("@")[0], role: "USER" } });
+
+  await setSession(user.email, user.role);
   revalidatePath("/profile");
   revalidateAtlasCms();
-  redirect(redirectTo.startsWith("/") ? redirectTo : "/profile");
+  // Only allow same-site relative redirects ("//evil.com" is protocol-relative).
+  const safeRedirect = redirectTo.startsWith("/") && !redirectTo.startsWith("//") ? redirectTo : "/profile";
+  redirect(safeRedirect);
 }
 
 export async function logoutUser() {
-  const cookieStore = await cookies();
-  cookieStore.delete("user_email");
-  cookieStore.delete("user_role");
-  cookieStore.delete("admin_session");
+  await clearSession();
   revalidatePath("/profile");
   revalidateAtlasCms();
   redirect("/profile");
@@ -204,28 +185,23 @@ export async function logoutUser() {
 
 export async function adminLoginAction(formData: FormData) {
   const email = String(formData.get("email") ?? "").trim();
-  const password = String(formData.get("password") ?? "").trim();
+  const password = String(formData.get("password") ?? "");
 
-  const expectedUser = process.env.ADMIN_BASIC_USER || "creativelab.co.th@gmail.com";
-  const expectedPassword = process.env.ADMIN_BASIC_PASSWORD || "I@M_Cr3LabTH_F4M";
-
-  if (email === expectedUser && password === expectedPassword) {
-    const user = await prisma.user.upsert({
-      where: { email },
-      update: { role: "ADMIN" },
-      create: { email, name: "Admin", role: "ADMIN" }
-    });
-
-    const cookieStore = await cookies();
-    cookieStore.set("user_email", user.email, { path: "/" });
-    cookieStore.set("user_role", "ADMIN", { path: "/" });
-    cookieStore.set("admin_session", "true", { path: "/" });
-    
-    revalidateAtlasCms();
-    redirect("/admin?collection=submitted-data");
-  } else {
+  // Credentials come only from ADMIN_BASIC_USER / ADMIN_BASIC_PASSWORD.
+  // If either env var is unset, this always fails (no default password).
+  if (!(await checkAdminCredentials(email, password))) {
     redirect("/admin-login?error=invalid_credentials");
   }
+
+  const user = await prisma.user.upsert({
+    where: { email },
+    update: { role: "ADMIN" },
+    create: { email, name: "Admin", role: "ADMIN" }
+  });
+
+  await setSession(user.email, "ADMIN");
+  revalidateAtlasCms();
+  redirect("/admin?collection=submitted-data");
 }
 
 export async function setLanguage(lang: "en" | "th") {
@@ -235,6 +211,7 @@ export async function setLanguage(lang: "en" | "th") {
 }
 
 export async function upsertSourceRecordAction(formData: FormData) {
+  await requireRole("ADMIN"); // B1: server actions are public endpoints; check here, not only in the UI
   const id = readTextField(formData, "id");
   const url = readOptionalUrlField(formData, "url");
   const sourceType = readTextField(formData, "sourceType") as any;
@@ -274,6 +251,7 @@ export async function upsertSourceRecordAction(formData: FormData) {
 }
 
 export async function upsertRobotModelAction(formData: FormData) {
+  await requireRole("ADMIN"); // B1: server actions are public endpoints; check here, not only in the UI
   const id = readTextField(formData, "id");
   const canonicalName = readTextField(formData, "canonicalName");
 
@@ -313,6 +291,7 @@ export async function upsertRobotModelAction(formData: FormData) {
 }
 
 export async function upsertContributionAction(formData: FormData) {
+  await requireRole("ADMIN"); // B1: server actions are public endpoints; check here, not only in the UI
   const id = readTextField(formData, "id");
   const title = readTextField(formData, "title");
   const contributionType = readTextField(formData, "contributionType");
@@ -351,6 +330,7 @@ export async function upsertContributionAction(formData: FormData) {
 }
 
 export async function upsertSubmittedDataAction(formData: FormData) {
+  await requireRole("ADMIN"); // B1: server actions are public endpoints; check here, not only in the UI
   const id = readTextField(formData, "id");
   const title = readTextField(formData, "title");
   const submissionType = readTextField(formData, "submissionType");

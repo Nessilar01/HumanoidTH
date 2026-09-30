@@ -8,6 +8,7 @@ import MobileTabNav from "./components/MobileTabNav";
 import DataPullFab from "./components/DataPullFab";
 import FirstTimeLoader from "./components/FirstTimeLoader";
 import { getTranslation } from "@/lib/translations";
+import { getSession } from "@/lib/session";
 import { defaultSeoDescription, getSiteUrl, siteName } from "@/lib/seo";
 import "./globals.css";
 
@@ -98,6 +99,8 @@ export const metadata: Metadata = {
 export default async function RootLayout({ children }: { children: React.ReactNode }) {
   const cookieStore = await cookies();
   const lang = (cookieStore.get("lang")?.value || "en") as "en" | "th";
+  // B1: the data-pull button writes to the DB, so only admins get it.
+  const isAdmin = (await getSession())?.role === "ADMIN";
   const t = getTranslation(lang);
   const siteUrl = getSiteUrl();
   const structuredData = {
@@ -150,7 +153,7 @@ export default async function RootLayout({ children }: { children: React.ReactNo
             </div>
           </aside>
           <main className="main motion-page">{children}</main>
-          <DataPullFab />
+          {isAdmin && <DataPullFab />}
           <MobileTabNav currentLang={lang} />
         </div>
       </body>

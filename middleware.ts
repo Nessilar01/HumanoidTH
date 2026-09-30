@@ -1,23 +1,53 @@
 import { NextRequest, NextResponse } from "next/server";
+import { SESSION_COOKIE, checkAdminCredentials, hasRole, verifySession } from "@/lib/auth";
 
-const protectedPrefixes = ["/admin", "/data-pulls"];
+// ---------------------------------------------------------------------------
+// Route protection (Baseline B1 + B3).
+//
+// Changes from upstream:
+//   - Pages: require a *signed* session with role ADMIN (was: cookie === "true").
+//   - /database added: it is a raw table browser that exposed submissions
+//     (submitter emails) and private inventory to anonymous visitors.
+//   - APIs: accept HTTP Basic with env credentials OR an admin session cookie.
+//     No hardcoded fallback credentials: unset env = Basic auth disabled.
+//
+// Middleware is the first gate only. Pages and server actions check the role
+// again (defense in depth), because matcher mistakes are easy to make.
+// ---------------------------------------------------------------------------
+
+const protectedPrefixes = ["/admin", "/data-pulls", "/database"];
 const protectedApiPrefixes = ["/api/ingest", "/api/export"];
 
-function isProtectedPath(pathname: string) {
-  return protectedPrefixes.some((prefix) => pathname === prefix || pathname.startsWith(`${prefix}/`));
+function matchesPrefix(pathname: string, prefixes: string[]) {
+  return prefixes.some((prefix) => pathname === prefix || pathname.startsWith(`${prefix}/`));
 }
 
-function isProtectedApiPath(pathname: string) {
-  return protectedApiPrefixes.some((prefix) => pathname === prefix || pathname.startsWith(`${prefix}/`));
+/** True if the request carries a valid, unexpired ADMIN session. */
+async function isAdminSession(request: NextRequest) {
+  const session = await verifySession(request.cookies.get(SESSION_COOKIE)?.value);
+  return hasRole(session?.role, "ADMIN");
 }
 
-export function middleware(request: NextRequest) {
+/** True if the request carries correct HTTP Basic admin credentials. */
+async function hasValidBasicAuth(request: NextRequest) {
+  const header = request.headers.get("authorization");
+  if (!header?.startsWith("Basic ")) return false;
+  try {
+    const decoded = atob(header.slice("Basic ".length));
+    const sep = decoded.indexOf(":"); // password may itself contain ':'
+    if (sep < 0) return false;
+    return await checkAdminCredentials(decoded.slice(0, sep), decoded.slice(sep + 1));
+  } catch {
+    return false; // malformed base64
+  }
+}
+
+export async function middleware(request: NextRequest) {
   const { pathname } = request.nextUrl;
 
-  // 1. Protect Web Pages (Redirect to actual UI login page)
-  if (isProtectedPath(pathname)) {
-    const adminSession = request.cookies.get("admin_session")?.value;
-    if (adminSession !== "true") {
+  // 1. Protected pages -> redirect to the login UI.
+  if (matchesPrefix(pathname, protectedPrefixes)) {
+    if (!(await isAdminSession(request))) {
       const loginUrl = new URL("/admin-login", request.url);
       loginUrl.searchParams.set("from", pathname);
       return NextResponse.redirect(loginUrl);
@@ -25,23 +55,11 @@ export function middleware(request: NextRequest) {
     return NextResponse.next();
   }
 
-  // 2. Protect API Routes (Return 401 JSON without WWW-Authenticate header to prevent browser popups)
-  if (isProtectedApiPath(pathname)) {
-    const expectedUser = process.env.ADMIN_BASIC_USER || "creativelab.co.th@gmail.com";
-    const expectedPassword = process.env.ADMIN_BASIC_PASSWORD || "I@M_Cr3LabTH_F4M";
-
-    const header = request.headers.get("authorization");
-    if (header?.startsWith("Basic ")) {
-      try {
-        const [user, password] = atob(header.slice("Basic ".length)).split(":");
-        if (user === expectedUser && password === expectedPassword) {
-          return NextResponse.next();
-        }
-      } catch {
-        // Fall through to 401
-      }
+  // 2. Protected APIs -> 401 JSON (no WWW-Authenticate, avoids browser popups).
+  if (matchesPrefix(pathname, protectedApiPrefixes)) {
+    if ((await isAdminSession(request)) || (await hasValidBasicAuth(request))) {
+      return NextResponse.next();
     }
-
     return new NextResponse(JSON.stringify({ error: "Unauthorized. Admin credentials required." }), {
       status: 401,
       headers: { "Content-Type": "application/json" }
@@ -52,5 +70,11 @@ export function middleware(request: NextRequest) {
 }
 
 export const config = {
-  matcher: ["/admin/:path*", "/data-pulls/:path*", "/api/ingest/:path*", "/api/export"]
+  matcher: [
+    "/admin/:path*",
+    "/data-pulls/:path*",
+    "/database/:path*",
+    "/api/ingest/:path*",
+    "/api/export"
+  ]
 };
