@@ -30,6 +30,7 @@ owner's production site.
 | B1 | Server actions write without any check (`updateSubmissionStatus`, `runDataPull`, `upsert*Action`, map re-analysis) | `requireRole("ADMIN")` at the top of each | `app/actions.ts`, `app/map/actions.ts` |
 | B1 | "Run data pull" button shown to every visitor (writes to DB) | Rendered only for admin sessions | `app/layout.tsx` |
 | B1 | `analyzeClustersWithGemini` was exported from a `"use server"` file, i.e. a public endpoint that calls the paid Gemini API and writes the cache, with no auth check (found while writing B5 tests) | No longer exported; reachable only through the admin-guarded `reanalyzeClustersWithGemini`. A contract test now fails if any new server action lacks a guard or an explicit public justification | `app/map/actions.ts`, `test/server-actions-guard.test.ts` |
+| B2 | pnpm 12 fails a fresh install with `ERR_PNPM_IGNORED_BUILDS` (confirmed on Windows and on a clean copy in the sandbox) | Build scripts approved in the repo: `pnpm-workspace.yaml` (`allowBuilds`, pnpm 12) + `pnpm.onlyBuiltDependencies` (pnpm 9/10). Verified: pnpm 12.8.1 and 10.28.0 both complete `pnpm install` with no `.env` | `pnpm-workspace.yaml`, `package.json` |
 | B2 | `scripts/dev.ts` spawns `pnpm.cmd`; seed uses `tsx.CMD` (Windows only) | `pnpm` via shell; `node --import tsx` | `scripts/dev.ts`, `prisma.config.ts` |
 | B2 | Install fails before `.env` exists; README orders install before `.env` | `prisma.config.ts` no longer throws for `generate`; README reordered, pnpm build-script note, Docker Postgres step | `prisma.config.ts`, `README.md`, `.env.example` |
 | B3 | `/database` raw table browser (submissions with submitter emails, private inventory) open to anonymous visitors | Added to middleware matcher + page-level admin check | `middleware.ts`, `app/database/page.tsx` |
@@ -58,7 +59,7 @@ owner's production site.
 | `pnpm check:no-mock-data` | Windows + sandbox | Pass (upstream: 7 findings) |
 | `pnpm build` | Windows | Pass |
 | `pnpm dev` | Windows | Starts, `GET / 200` |
-| Install with no `.env` (B2) | **To fill in** | [ ] |
+| Install with no `.env` (B2) | Windows (pnpm 12) before this fix: no `DATABASE_URL` error, but `ERR_PNPM_IGNORED_BUILDS`. Sandbox, clean copy after the fix: pnpm 12.8.1 and 10.28.0 both pass (engine download replaced by a local stub because the sandbox blocks binaries.prisma.sh) | Pass in sandbox; **re-run on Windows after pulling** |
 | Browser checks (admin redirects, `/inventory`, `/profile`, `/map`) | **To fill in** | [ ] |
 | `pnpm test:e2e` | **To fill in** | [ ] |
 

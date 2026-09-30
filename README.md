@@ -91,7 +91,7 @@ docker run --name hth-db -e POSTGRES_PASSWORD=postgres -e POSTGRES_DB=hth -p 543
 pnpm install
 ```
 > [!NOTE]
-> pnpm 10+ blocks dependency build scripts by default. If install ends with `ERR_PNPM_IGNORED_BUILDS`, run `pnpm approve-builds`, approve `@prisma/client`, `@prisma/engines`, `prisma`, `esbuild`, `sharp`, `unrs-resolver`, then run `pnpm install` again. This writes `pnpm-workspace.yaml`.
+> pnpm 10+ blocks dependency build scripts unless approved. This repo already approves the six packages that need them (`pnpm-workspace.yaml` for pnpm 12, `pnpm.onlyBuiltDependencies` in `package.json` for pnpm 9/10), so a plain `pnpm install` works. If you ever see `ERR_PNPM_IGNORED_BUILDS` after adding a dependency, run `pnpm approve-builds`.
 
 ### 🗄️ 4. Create tables and seed
 ```bash
