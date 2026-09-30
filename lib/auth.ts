@@ -148,6 +148,18 @@ export function hasRole(role: Role | undefined | null, required: Role): boolean 
   return ROLE_RANK[role] >= ROLE_RANK[required];
 }
 
+/**
+ * Pure authorization check used by requireRole(): given the raw cookie value,
+ * return the session or throw. Kept here (no next/headers) so it is unit-testable.
+ */
+export async function authorizeToken(token: string | undefined, required: Role): Promise<SessionPayload> {
+  const session = await verifySession(token);
+  if (!session || !hasRole(session.role, required)) {
+    throw new Error("Unauthorized: this action requires the " + required + " role.");
+  }
+  return session;
+}
+
 // ---------- admin credentials ----------
 
 /**

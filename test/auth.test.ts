@@ -1,7 +1,7 @@
 // Unit tests for B1 signed sessions (runs with `pnpm test`, no DB or server needed).
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { checkAdminCredentials, hasRole, signSession, verifySession } from "../lib/auth";
+import { authorizeToken, checkAdminCredentials, hasRole, signSession, verifySession } from "../lib/auth";
 
 const SECRET = "x".repeat(40);
 
@@ -73,4 +73,15 @@ test("role ranking", () => {
   assert.equal(hasRole("USER", "ADMIN"), false);
   assert.equal(hasRole("RESEARCHER", "RESEARCHER"), true);
   assert.equal(hasRole(undefined, "USER"), false);
+});
+
+test("authorizeToken (used by requireRole): anonymous and USER are rejected, ADMIN passes", async () => {
+  withEnv({ AUTH_SECRET: SECRET });
+  await assert.rejects(() => authorizeToken(undefined, "ADMIN"), /Unauthorized/);
+  await assert.rejects(() => authorizeToken("forged.token", "ADMIN"), /Unauthorized/);
+  const user = await signSession({ email: "u@x.co", role: "USER" });
+  await assert.rejects(() => authorizeToken(user, "ADMIN"), /Unauthorized/);
+  const admin = await signSession({ email: "a@x.co", role: "ADMIN" });
+  assert.equal((await authorizeToken(admin, "ADMIN")).role, "ADMIN");
+  assert.equal((await authorizeToken(user, "USER")).role, "USER");
 });

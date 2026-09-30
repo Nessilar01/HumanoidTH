@@ -50,7 +50,10 @@ function sanitizeClusters(raw: unknown): ContributionMapPoint[] {
   );
 }
 
-export async function analyzeClustersWithGemini(): Promise<ContributionMapPoint[]> {
+// NOT exported on purpose: every export of a "use server" file is a public HTTP
+// endpoint. This one calls a paid API and writes the cache, so it is reachable
+// only through reanalyzeClustersWithGemini() below, which checks ADMIN first.
+async function analyzeClustersWithGemini(): Promise<ContributionMapPoint[]> {
   const apiKey = process.env.GEMINI_API_KEY;
   if (!apiKey || apiKey === "mock_key" || apiKey.trim() === "") {
     throw new Error("GEMINI_API_KEY environment variable is not set or is invalid.");

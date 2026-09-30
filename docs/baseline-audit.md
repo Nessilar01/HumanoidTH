@@ -29,6 +29,7 @@ owner's production site.
 | B1 | `/profile` lets anyone pick role ADMIN; "Login as Administrator" button (`loginAsUser`) | Role selector and `loginAsUser` removed; email login creates USER only, never changes a role; ADMIN accounts must use `/admin-login` | `app/actions.ts`, `app/profile/page.tsx` |
 | B1 | Server actions write without any check (`updateSubmissionStatus`, `runDataPull`, `upsert*Action`, map re-analysis) | `requireRole("ADMIN")` at the top of each | `app/actions.ts`, `app/map/actions.ts` |
 | B1 | "Run data pull" button shown to every visitor (writes to DB) | Rendered only for admin sessions | `app/layout.tsx` |
+| B1 | `analyzeClustersWithGemini` was exported from a `"use server"` file, i.e. a public endpoint that calls the paid Gemini API and writes the cache, with no auth check (found while writing B5 tests) | No longer exported; reachable only through the admin-guarded `reanalyzeClustersWithGemini`. A contract test now fails if any new server action lacks a guard or an explicit public justification | `app/map/actions.ts`, `test/server-actions-guard.test.ts` |
 | B2 | `scripts/dev.ts` spawns `pnpm.cmd`; seed uses `tsx.CMD` (Windows only) | `pnpm` via shell; `node --import tsx` | `scripts/dev.ts`, `prisma.config.ts` |
 | B2 | Install fails before `.env` exists; README orders install before `.env` | `prisma.config.ts` no longer throws for `generate`; README reordered, pnpm build-script note, Docker Postgres step | `prisma.config.ts`, `README.md`, `.env.example` |
 | B3 | `/database` raw table browser (submissions with submitter emails, private inventory) open to anonymous visitors | Added to middleware matcher + page-level admin check | `middleware.ts`, `app/database/page.tsx` |
@@ -41,6 +42,7 @@ owner's production site.
 | B4 | Private inventory (custodian, location, notes) sent to Gemini | Only `visibility = "public"` inventory is sent | `app/map/actions.ts` |
 | B4 | Gemini key in URL query string; model hardcoded to `gemini-1.5-flash` | Key in `x-goog-api-key` header; `GEMINI_MODEL` env | `app/map/actions.ts`, `lib/classifiers.ts` |
 | B5 | Smoke test depends on the "Login as Administrator" bypass | Rewritten: public crawl, anonymous/forged-cookie rejection, privacy checks, real admin login via env | `tests-node/smoke.spec.ts` |
+| B5 | No tests for server actions or route protection | `test/middleware.test.ts` runs the real middleware against synthetic requests (anonymous, forged cookies, USER, ADMIN, Basic auth, missing env); `test/server-actions-guard.test.ts` scans every `"use server"` export for an admin guard; `authorizeToken` (behind `requireRole`) unit-tested | `test/*.test.ts`, `lib/auth.ts` |
 | B5 | `network:check` points to a missing file | Script removed; `test:e2e` added | `package.json` |
 | B6 | `pnpm db:seed` never imports `data/seeds/owned_inventory.seed.yml` | Strict parser + idempotent upsert, linked to RobotModel by name | `lib/inventory-seed.ts`, `lib/seed-importer.ts` |
 | — | `check:no-mock-data` fails on upstream | Passes (B4 fix + two file-source labels reworded) | `app/network/NetworkGraphClient.tsx` |
@@ -49,11 +51,20 @@ owner's production site.
 
 | Check | Where verified | Result |
 |---|---|---|
-| `pnpm typecheck` | Sandbox (Linux) | Pass |
-| `pnpm test` | Sandbox | 14/14 pass (3 upstream + 8 auth + 3 inventory parser) |
-| `pnpm check:no-mock-data` | Sandbox | Pass |
-| `prisma generate` without `DATABASE_URL` | Sandbox | Pass |
-| `pnpm build`, `db:push`, `db:seed`, `test:e2e`, manual route check | **Team machine (to fill in)** | [ ] |
+| `pnpm db:push` | Windows, fresh machine (Node 24, pnpm 12, Docker Postgres 16) | Pass |
+| `pnpm db:seed` | Windows | Pass: "Seeded 2 owned inventory record(s)" (was 0) |
+| `pnpm typecheck` | Windows + Linux sandbox | Pass |
+| `pnpm test` | Sandbox: 27/27 (unit + middleware integration + server-action guard). Windows: 14/14 on the previous commit; re-run after pulling | Pass |
+| `pnpm check:no-mock-data` | Windows + sandbox | Pass (upstream: 7 findings) |
+| `pnpm build` | Windows | Pass |
+| `pnpm dev` | Windows | Starts, `GET / 200` |
+| Install with no `.env` (B2) | **To fill in** | [ ] |
+| Browser checks (admin redirects, `/inventory`, `/profile`, `/map`) | **To fill in** | [ ] |
+| `pnpm test:e2e` | **To fill in** | [ ] |
+
+**Platform note (B2):** the dev script now works without `pnpm.cmd`, but it has only been run on Windows. Linux and macOS are untested. `pnpm dev` prints a harmless Node `DEP0190` warning because the script uses `shell: true` with fixed arguments.
+
+**Inventory note (B6):** the seed file has 2 records, both `visibility: private`. The public `/inventory` view lists them with serial, location and notes masked.
 
 ## Known limitations (not fixed; logged as issues)
 
@@ -61,6 +72,7 @@ owner's production site.
 - No CSRF token beyond `SameSite=Lax` cookies and Next.js server-action origin checks.
 - `lib/classifiers.ts` uses `includes()` without word boundaries and fixed confidence values.
 - `@prisma/client` v6 with `@prisma/adapter-pg` v7 version mismatch.
+- No rate limiting on `/admin-login`: a password can be guessed online. Use a long password and keep the deployment private until this is added.
 - `seedAtlasData` re-creates `submission_record` rows on every run (duplicates).
 
 ## Migration note for existing `.env` files

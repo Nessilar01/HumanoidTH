@@ -16,7 +16,7 @@ import {
   LEGACY_COOKIES,
   SESSION_COOKIE,
   SESSION_TTL_SECONDS,
-  hasRole,
+  authorizeToken,
   signSession,
   verifySession,
   type Role,
@@ -35,11 +35,8 @@ export async function getSession(): Promise<SessionPayload | null> {
  * must fail loudly, and Next.js turns the error into a failed request.
  */
 export async function requireRole(required: Role): Promise<SessionPayload> {
-  const session = await getSession();
-  if (!session || !hasRole(session.role, required)) {
-    throw new Error("Unauthorized: this action requires the " + required + " role.");
-  }
-  return session;
+  const store = await cookies();
+  return authorizeToken(store.get(SESSION_COOKIE)?.value, required);
 }
 
 /** Issue a signed, httpOnly session cookie. */
